@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Netlify 結果檢視器</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0b0d10;color:#e9eef5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{max-width:900px;margin:auto;padding:20px}
+h1{font-size:24px;margin:0 0 12px}
+.card{background:#14181e;border:1px solid #28303a;border-radius:16px;padding:16px;margin-bottom:14px}
+input[type="file"]{display:none}
+.upload-btn{display:inline-block;padding:10px 16px;background:#e9eef5;color:#101318;font-weight:700;border-radius:10px;cursor:pointer;text-align:center}
+.upload-btn:hover{background:#d0d7de}
+.stats{display:flex;gap:12px;margin-top:12px;font-size:14px;color:#8793a2}
+.stats b{color:#7ee787}
+
+/* 網格排版 (Grid) */
+#resultsList {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 20px;
+  margin-top: 16px;
+}
+
+/* 卡片樣式 */
+.list-item{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:12px;
+  background:#0d1116;
+  padding:16px;
+  border-radius:12px;
+  border:1px solid #252c35;
+}
+
+/* 縮圖容器 */
+.thumb-container{
+  display:block;
+  width:100%;
+  height:160px;
+  border-radius:8px;
+  overflow:hidden;
+  background:#252c35;
+  border:1px solid #343e4a;
+  cursor:pointer;
+  text-decoration:none;
+  transition:border-color 0.2s;
+}
+.thumb-container:hover{border-color:#7ee787}
+.thumbnail{width:100%;height:100%;object-fit:cover;object-position:top}
+
+/* 網址名稱樣式 */
+.domain{
+  word-break:break-all;
+  color:#7ee787;
+  font-family:ui-monospace,monospace;
+  font-size:16px;
+  font-weight:bold;
+  text-align:center;
+}
+
+button{border:0;border-radius:8px;padding:7px 12px;background:#252c35;color:#e9eef5;font-weight:700;cursor:pointer}
+button:hover{background:#343e4a}
+button:disabled{opacity:0.4;cursor:not-allowed}
+.pagination{display:flex;justify-content:space-between;align-items:center;margin-top:24px;padding-top:16px;border-top:1px solid #252c35}
+.controls{display:flex;gap:8px;align-items:center}
+select{background:#0d1116;color:#fff;border:1px solid #343e4a;border-radius:8px;padding:6px 10px;font:inherit}
+.small{font-size:12px;color:#8793a2}
+</style>
+</head>
+<body>
+<main>
+  <h1>Netlify 結果分頁檢視器</h1>
+  
+  <section class="card">
+    <label class="upload-btn">
+      選取結果檔案 (index.html / report.html / .txt)
+      <input type="file" id="fileInput" accept=".html,.txt">
+    </label>
+    <div class="stats" id="fileStats">尚未載入檔案</div>
+  </section>
+
+  <section class="card" id="displayCard" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <strong>已發現站點</strong>
+      <div class="controls">
+        <span class="small">每頁筆數：</span>
+        <select id="pageSize">
+          <option value="20" selected>20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="resultsList"></div>
+
+    <div class="pagination">
+      <button id="prevBtn">上一頁</button>
+      <span class="small" id="pageIndicator">第 1 / 1 頁</span>
+      <button id="nextBtn">下一頁</button>
+    </div>
+  </section>
+</main>
+
+<script>
+let domainList = [];
+let currentPage = 1;
+let pageSize = 20;
+
+const fileInput = document.getElementById('fileInput');
+const fileStats = document.getElementById('fileStats');
+const displayCard = document.getElementById('displayCard');
+const resultsList = document.getElementById('resultsList');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const pageIndicator = document.getElementById('pageIndicator');
+const pageSizeSelect = document.getElementById('pageSize');
+
+fileInput.addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  fileStats.textContent = `讀取中 (${(file.size / 1024 / 1024).toFixed(2)} MB)...`;
+
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    const content = evt.target.result;
+    
+    // 使用正則比對所有符合 [a-z0-9-]+.netlify.app 的網址
+    const matches = content.match(/([a-zA-Z0-9-]+)\.netlify\.app/g) || [];
+    
+    // 去除重複項目
+    domainList = [...new Set(matches)];
+
+    if (domainList.length === 0) {
+      fileStats.textContent = `已讀取完成，但未在檔案中找到任何 .netlify.app 網址`;
+      displayCard.style.display = 'none';
+      return;
+    }
+
+    fileStats.innerHTML = `檔案：<b>${file.name}</b> ｜ 找到 <b>${domainList.length.toLocaleString()}</b> 個站點`;
+    currentPage = 1;
+    displayCard.style.display = 'block';
+    renderPage();
+  };
+
+  reader.readAsText(file);
+});
+
+function renderPage() {
+  const totalPages = Math.ceil(domainList.length / pageSize) || 1;
+  currentPage = Math.max(1, Math.min(currentPage, totalPages));
+
+  const start = (currentPage - 1) * pageSize;
+  const end = start + pageSize;
+  const currentItems = domainList.slice(start, end);
+
+  resultsList.innerHTML = currentItems.map(domain => {
+    const siteUrl = `https://${domain}`;
+    const thumbnailUrl = `https://image.thum.io/get/width/400/crop/800/${siteUrl}`;
+    const shortName = domain.replace('.netlify.app', '');
+
+    return `
+      <div class="list-item">
+        <a href="${siteUrl}" target="_blank" rel="noopener" class="thumb-container" title="點擊在新分頁開啟">
+          <img class="thumbnail" src="${thumbnailUrl}" loading="lazy" alt="預覽縮圖" onerror="this.style.display='none'">
+        </a>
+        <span class="domain">${shortName}</span>
+      </div>
+    `;
+  }).join('');
+
+  pageIndicator.textContent = `第 ${currentPage} / ${totalPages} 頁 (共 ${domainList.length.toLocaleString()} 筆)`;
+  prevBtn.disabled = (currentPage === 1);
+  nextBtn.disabled = (currentPage >= totalPages);
+}
+
+// 修改按鈕事件：加入滑動到頂部的功能
+prevBtn.addEventListener('click', () => {
+  if (currentPage > 1) {
+    currentPage--;
+    renderPage();
+    window.scrollTo({ top: 0, behavior: 'smooth' }); // 平滑滑動到頂部
+  }
+});
+
+nextBtn.addEventListener('click', () => {
+  const totalPages = Math.ceil(domainList.length / pageSize);
+  if (currentPage < totalPages) {
+    currentPage++;
+    renderPage();
+    window.scrollTo({ top: 0, behavior: 'smooth' }); // 平滑滑動到頂部
+  }
+});
+
+// 切換每頁筆數時，也一併滑動到頂端
+pageSizeSelect.addEventListener('change', (e) => {
+  pageSize = parseInt(e.target.value, 10);
+  currentPage = 1;
+  renderPage();
+  window.scrollTo({ top: 0, behavior: 'smooth' }); 
+});
+</script>
+</body>
+</html>
