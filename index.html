@@ -62,11 +62,22 @@ button{border:0;border-radius:8px;padding:7px 12px;background:#252c35;color:#e9e
 button:hover{background:#343e4a}
 button:disabled{opacity:0.4;cursor:not-allowed}
 .pagination{display:flex;justify-content:space-between;align-items:center;margin-top:24px;padding-top:16px;border-top:1px solid #252c35}
-.controls{display:flex;gap:8px;align-items:center}
 select{background:#0d1116;color:#fff;border:1px solid #343e4a;border-radius:8px;padding:6px 10px;font:inherit}
 .small{font-size:12px;color:#8793a2}
 
-/* 新增：自訂輸入頁碼的樣式 */
+/* 新增：上方控制列確保不換行且元素並排 */
+.top-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap; /* 絕對不換行 */
+  overflow-x: auto; /* 如果螢幕太小允許左右滑動 */
+  -ms-overflow-style: none; /* 隱藏 IE 捲軸 */
+  scrollbar-width: none; /* 隱藏 Firefox 捲軸 */
+}
+.top-controls::-webkit-scrollbar { display: none; /* 隱藏 Chrome 捲軸 */ }
+.top-controls > * { flex-shrink: 0; /* 防止內部元素被擠壓變形 */ }
+
 .page-jump-container { display: flex; align-items: center; gap: 6px; }
 .page-input { 
   width: 50px; 
@@ -78,11 +89,10 @@ select{background:#0d1116;color:#fff;border:1px solid #343e4a;border-radius:8px;
   text-align: center; 
   font: inherit; 
 }
-/* 隱藏數字輸入框預設的上下箭頭 */
 .page-input::-webkit-outer-spin-button,
 .page-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .page-input[type=number] { -moz-appearance: textfield; }
-
+.divider { width:1px; height:18px; background:#343e4a; margin: 0 4px; }
 </style>
 </head>
 <body>
@@ -98,9 +108,21 @@ select{background:#0d1116;color:#fff;border:1px solid #343e4a;border-radius:8px;
   </section>
 
   <section class="card" id="displayCard" style="display:none">
-    <div style="display:flex;justify-content:space-between;align-items:center">
+    <!-- 上方控制列 (全部併成一排) -->
+    <div class="top-controls">
       <strong>已發現站點</strong>
-      <div class="controls">
+      
+      <div class="divider"></div>
+      
+      <div class="page-jump-container">
+        <span class="small">第</span>
+        <input type="number" id="pageInput" min="1" class="page-input">
+        <span class="small" id="pageTotalIndicator">/ 1 頁</span>
+      </div>
+      
+      <div class="divider"></div>
+      
+      <div style="display:flex; align-items:center; gap:6px;">
         <span class="small">每頁筆數：</span>
         <select id="pageSize">
           <option value="20" selected>20</option>
@@ -110,15 +132,13 @@ select{background:#0d1116;color:#fff;border:1px solid #343e4a;border-radius:8px;
       </div>
     </div>
 
+    <!-- 列表容器 -->
     <div id="resultsList"></div>
 
+    <!-- 底部控制列 -->
     <div class="pagination">
       <button id="prevBtn">上一頁</button>
-      <div class="page-jump-container">
-        <span class="small">第</span>
-        <input type="number" id="pageInput" min="1" class="page-input">
-        <span class="small" id="pageTotalIndicator">/ 1 頁</span>
-      </div>
+      <span class="small" id="bottomPageIndicator">第 1 / 1 頁</span>
       <button id="nextBtn">下一頁</button>
     </div>
   </section>
@@ -128,6 +148,7 @@ select{background:#0d1116;color:#fff;border:1px solid #343e4a;border-radius:8px;
 let domainList = [];
 let currentPage = 1;
 let pageSize = 20;
+let preloadTimer = null; 
 
 const fileInput = document.getElementById('fileInput');
 const fileStats = document.getElementById('fileStats');
@@ -137,6 +158,7 @@ const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 const pageInput = document.getElementById('pageInput');
 const pageTotalIndicator = document.getElementById('pageTotalIndicator');
+const bottomPageIndicator = document.getElementById('bottomPageIndicator');
 const pageSizeSelect = document.getElementById('pageSize');
 
 fileInput.addEventListener('change', function(e) {
@@ -167,6 +189,23 @@ fileInput.addEventListener('change', function(e) {
   reader.readAsText(file);
 });
 
+function preloadPageImages(page) {
+  const totalPages = Math.ceil(domainList.length / pageSize);
+  if (page < 1 || page > totalPages) return; 
+
+  const start = (page - 1) * pageSize;
+  const end = start + pageSize;
+  const itemsToPreload = domainList.slice(start, end);
+
+  itemsToPreload.forEach(domain => {
+    const siteUrl = `https://${domain}`;
+    const thumbnailUrl = `https://image.thum.io/get/width/400/crop/800/${siteUrl}`;
+    
+    const img = new Image();
+    img.src = thumbnailUrl;
+  });
+}
+
 function renderPage() {
   const totalPages = Math.ceil(domainList.length / pageSize) || 1;
   currentPage = Math.max(1, Math.min(currentPage, totalPages));
@@ -190,13 +229,23 @@ function renderPage() {
     `;
   }).join('');
 
-  // 更新輸入框的數值與最大頁數
+  // 更新上方輸入框狀態與文字
   pageInput.value = currentPage;
   pageInput.max = totalPages;
-  pageTotalIndicator.textContent = `/ ${totalPages} 頁 (共 ${domainList.length.toLocaleString()} 筆)`;
+  pageTotalIndicator.textContent = `/ ${totalPages} 頁`;
+  
+  // 更新下方純文字進度
+  bottomPageIndicator.textContent = `第 ${currentPage} / ${totalPages} 頁 (共 ${domainList.length.toLocaleString()} 筆)`;
   
   prevBtn.disabled = (currentPage === 1);
   nextBtn.disabled = (currentPage >= totalPages);
+
+  if (preloadTimer) clearTimeout(preloadTimer);
+  
+  preloadTimer = setTimeout(() => {
+    preloadPageImages(currentPage + 1); 
+    preloadPageImages(currentPage - 1); 
+  }, 1500);
 }
 
 prevBtn.addEventListener('click', () => {
@@ -216,25 +265,21 @@ nextBtn.addEventListener('click', () => {
   }
 });
 
-// 新增：監聽輸入框的改變事件 (按下 Enter 或點擊外部)
 pageInput.addEventListener('change', (e) => {
   const totalPages = Math.ceil(domainList.length / pageSize) || 1;
   let targetPage = parseInt(e.target.value, 10);
 
-  // 驗證輸入的數字，確保不會小於 1 或大於總頁數
   if (isNaN(targetPage) || targetPage < 1) {
     targetPage = 1;
   } else if (targetPage > totalPages) {
     targetPage = totalPages;
   }
 
-  // 如果目標頁數與當前頁數不同，才重新渲染並滑動到頂部
   if (currentPage !== targetPage) {
     currentPage = targetPage;
     renderPage();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } else {
-    // 如果輸入無效導致頁碼沒變，則將輸入框恢復為當前正確頁碼
     e.target.value = currentPage;
   }
 });
